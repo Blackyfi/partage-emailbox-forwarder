@@ -50,8 +50,24 @@ class PartageSession:
                 sender = row.query_selector('[id$="__fr"]')
                 subject_el = row.query_selector('[id$="__su"] span:first-child')
                 date_el = row.query_selector('[id$="__dt"]')
+                prev_el = p.query_selector('.MsgBody')
+                prev_html = prev_el.inner_html() if prev_el else None
                 row.click()
                 p.wait_for_selector('.MsgBody', timeout=self.cfg['browser_timeout'])
+                # The previous message's body lingers in the reading pane, so a
+                # bare wait_for_selector can return it and forward the wrong
+                # content. Wait for it to actually change; if it legitimately
+                # does not (identical bodies), fall through rather than fail.
+                if prev_html is not None:
+                    try:
+                        p.wait_for_function(
+                            "prev => {const e = document.querySelector('.MsgBody');"
+                            " return e && e.innerHTML !== prev;}",
+                            arg=prev_html,
+                            timeout=self.cfg['browser_timeout'],
+                        )
+                    except Exception:
+                        log.warning('Reading pane did not change after opening %s', conv_id)
                 body_el = p.query_selector('.MsgBody')
                 emails.append({
                     'id':      conv_id,

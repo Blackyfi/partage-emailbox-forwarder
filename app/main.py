@@ -27,9 +27,19 @@ def run():
             known = get_known_ids(cfg['db_path'])
             emails = session.get_new_emails(known)
             for email in emails:
-                forward(email, cfg)
-                mark_forwarded(cfg['db_path'], email['id'])
-                log.info(f"Forwarded: {email['subject']}")
+                # Opening the message in Partage already marked it read, so a
+                # failure here means it will not look new next cycle. Keep going
+                # through the rest of the batch and make the loss loud.
+                try:
+                    forward(email, cfg)
+                    mark_forwarded(cfg['db_path'], email['id'])
+                    log.info(f"Forwarded: {email['subject']}")
+                except Exception:
+                    log.error(
+                        f"NOT FORWARDED (already marked read in Partage, will not "
+                        f"retry): id={email['id']} subject={email['subject']!r}",
+                        exc_info=True,
+                    )
 
             if not emails:
                 log.debug('No new emails')

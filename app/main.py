@@ -16,12 +16,17 @@ def run():
     log = logging.getLogger(__name__)
 
     session = PartageSession(cfg)
-    session.start()
+    try:
+        session.start()
+    except Exception:
+        # Don't die on a bad first attempt (CAS down, no network at boot); the
+        # loop below notices the dead session and rebuilds it.
+        log.error('Initial session start failed', exc_info=True)
 
     while True:
         try:
             if not session.is_logged_in():
-                log.warning('Session expired – re-logging in')
+                log.warning('Session expired - re-logging in')
                 session._login()
 
             known = get_known_ids(cfg['db_path'])
@@ -41,11 +46,23 @@ def run():
                         exc_info=True,
                     )
 
-            if not emails:
-                log.debug('No new emails')
+            # Logged at INFO so a healthy-but-idle poller is distinguishable
+            # from one that has quietly stopped polling altogether.
+            log.info(f'Cycle complete: {len(emails)} new')
 
         except Exception as e:
             log.error(f'Cycle error: {e}', exc_info=True)
+            # A crashed or OOM-killed browser fails every future cycle
+            # identically, so retrying the same dead page would stall the
+            # forwarder forever. Rebuild the session instead.
+            if not session.is_alive():
+                log.warning('Browser session is dead - restarting it')
+                try:
+                    session.stop()
+                    session.start()
+                    log.info('Browser session restarted')
+                except Exception:
+                    log.error('Session restart failed; will retry', exc_info=True)
 
         time.sleep(cfg['poll_interval'])
 

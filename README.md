@@ -44,7 +44,7 @@ Required variables:
 
 | Variable | Description |
 |----------|-------------|
-| `PARTAGE_USERNAME` | Your Partage email address (e.g., `prenom.nom@bordeaux-inp.fr`) |
+| `PARTAGE_USERNAME` | Your CAS login, not an email address (e.g., `nthongphao`) |
 | `PARTAGE_PASSWORD` | Your Partage/CAS password |
 | `CAS_URL` | CAS login URL |
 | `FORWARD_TO` | Destination Gmail address |

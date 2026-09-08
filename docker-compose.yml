@@ -3,10 +3,21 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    environment:
+      # Without this the container logs in UTC while Partage and Gmail show
+      # local time, which makes correlating a missed mail needlessly hard.
+      TZ: Europe/Paris
     volumes:
       - ./data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       resources:
         limits:
-          memory: 512M
+          # Chromium plus the Zimbra SPA does not fit comfortably in 512M; an
+          # OOM kill of the browser is the main way this stalls.
+          memory: 1G
           cpus: '1.0'

@@ -35,8 +35,12 @@ def forward(email: dict, cfg: dict):
 
     # Let a reply go to the person who actually wrote, when we scraped a real
     # address rather than just a display name.
-    if '@' in parseaddr(sender)[1]:
-        msg['Reply-To'] = sender
+    reply_name, reply_addr = parseaddr(sender)
+    if '@' in reply_addr:
+        # Assigning the raw "Name <addr>" string makes the compat32 generator
+        # RFC2047-encode the whole value, address included, leaving no
+        # addr-spec to reply to. formataddr encodes only the display name.
+        msg['Reply-To'] = formataddr((reply_name, reply_addr))
 
     text_part = (
         f'Forwarded automatically from your Partage mailbox\n'

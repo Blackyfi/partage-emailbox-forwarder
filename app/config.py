@@ -6,12 +6,13 @@ def load():
     required = [
         'PARTAGE_USERNAME',
         'PARTAGE_PASSWORD',
-        'CAS_URL',
         'FORWARD_TO',
         'GMAIL_USER',
         'GMAIL_APP_PASSWORD',
     ]
-    missing = [k for k in required if k not in os.environ]
+    # A blank value is as broken as an absent one, and fails far less clearly
+    # later (an empty password just looks like a rejected login).
+    missing = [k for k in required if not os.environ.get(k, '').strip()]
     if missing:
         print(f"Missing required environment variables: {', '.join(missing)}", file=sys.stderr)
         sys.exit(1)
@@ -20,7 +21,7 @@ def load():
         'username':        os.environ['PARTAGE_USERNAME'],
         'password':        os.environ['PARTAGE_PASSWORD'],
         'partage_url':     os.environ.get('PARTAGE_URL', 'https://partage.bordeaux-inp.fr/mail'),
-        'cas_url':         os.environ['CAS_URL'],
+        'cas_url':         os.environ.get('CAS_URL', ''),  # unused: login goes via partage_url
         'forward_to':      os.environ['FORWARD_TO'],
         'gmail_user':      os.environ['GMAIL_USER'],
         'gmail_password':  os.environ['GMAIL_APP_PASSWORD'].replace(' ', ''),

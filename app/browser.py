@@ -1,3 +1,4 @@
+import re
 from playwright.sync_api import sync_playwright
 import logging
 
@@ -18,38 +19,51 @@ class PartageSession:
 
     def _login(self):
         p = self._page
-        p.goto(self.cfg['cas_url'], timeout=self.cfg['browser_timeout'])
+        p.goto(self.cfg['partage_url'], timeout=self.cfg['browser_timeout'])
         p.fill('#username', self.cfg['username'])
         p.fill('#password', self.cfg['password'])
         p.click('[type=submit]')
-        p.wait_for_url('*partage.bordeaux-inp.fr*', timeout=self.cfg['browser_timeout'])
+        # SSO may show an "Information Release" consent page before redirecting
+        p.wait_for_url(re.compile(r'(sso|partage)\.bordeaux-inp\.fr'), timeout=self.cfg['browser_timeout'], wait_until='commit')
+        if 'sso.bordeaux-inp.fr' in p.url:
+            p.click('button[name="_eventId_proceed"]')
+        p.wait_for_function(
+            "() => window.location.hostname === 'partage.bordeaux-inp.fr'",
+            timeout=self.cfg['browser_timeout'],
+        )
         log.info('CAS login successful')
 
     def get_new_emails(self, known_ids: set) -> list:
         p = self._page
         p.goto(self.cfg['partage_url'], timeout=self.cfg['browser_timeout'])
-        # Wait for inbox list
-        # NOTE: CSS selectors are placeholders — inspect the live Partage/Zimbra DOM
-        # to confirm the correct selectors before deploying.
-        p.wait_for_selector('.zl__ri__r', timeout=self.cfg['browser_timeout'])
-        rows = p.query_selector_all('.zl__ri__r')
+        p.wait_for_function(
+            "() => window.location.hostname === 'partage.bordeaux-inp.fr'",
+            timeout=self.cfg['browser_timeout'],
+        )
+        p.wait_for_selector('[id^="zli__CLV"]', timeout=self.cfg['browser_timeout'])
+        rows = p.query_selector_all('[id^="zli__CLV"]')
         emails = []
         for row in rows:
-            msg_id = row.get_attribute('id')
-            if msg_id and msg_id not in known_ids:
+            conv_id = row.get_attribute('id').split('__')[-1]
+            is_unread = row.query_selector('.ImgMsgUnread') is not None
+            if conv_id and conv_id not in known_ids and is_unread:
+                sender = row.query_selector('[id$="__fr"]')
+                subject_el = row.query_selector('[id$="__su"] span:first-child')
+                date_el = row.query_selector('[id$="__dt"]')
                 row.click()
-                p.wait_for_selector('.msg', timeout=self.cfg['browser_timeout'])
+                p.wait_for_selector('.MsgBody', timeout=self.cfg['browser_timeout'])
+                body_el = p.query_selector('.MsgBody')
                 emails.append({
-                    'id':      msg_id,
-                    'from':    p.inner_text('.msg .From') or '',
-                    'subject': p.inner_text('.msg .Subject') or '(no subject)',
-                    'date':    p.inner_text('.msg .Date') or '',
-                    'body':    p.inner_html('.msg .Body') or '',
+                    'id':      conv_id,
+                    'from':    sender.inner_text() if sender else '',
+                    'subject': subject_el.inner_text() if subject_el else '(no subject)',
+                    'date':    date_el.inner_text() if date_el else '',
+                    'body':    body_el.inner_html() if body_el else '',
                 })
         return emails
 
     def is_logged_in(self) -> bool:
-        return 'cas.bordeaux-inp.fr' not in self._page.url
+        return 'partage.bordeaux-inp.fr' in self._page.url
 
     def stop(self):
         if self._browser:

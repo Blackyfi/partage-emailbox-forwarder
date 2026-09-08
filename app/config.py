@@ -23,7 +23,7 @@ def load():
         'cas_url':         os.environ['CAS_URL'],
         'forward_to':      os.environ['FORWARD_TO'],
         'gmail_user':      os.environ['GMAIL_USER'],
-        'gmail_password':  os.environ['GMAIL_APP_PASSWORD'],
+        'gmail_password':  os.environ['GMAIL_APP_PASSWORD'].replace(' ', ''),
         'poll_interval':   int(os.environ.get('POLL_INTERVAL_SECONDS', 300)),
         'log_level':       os.environ.get('LOG_LEVEL', 'INFO'),
         'db_path':         os.environ.get('DB_PATH', '/data/emails.db'),

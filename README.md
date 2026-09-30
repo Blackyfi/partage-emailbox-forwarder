@@ -6,7 +6,7 @@ Automated email forwarder that monitors a Partage (Zimbra) mailbox via CAS authe
 
 - **Automatic polling** – Checks for new emails at configurable intervals
 - **CAS authentication** – Logs into Partage via Bordeaux INP's central authentication system
-- **Email forwarding** – Forwards new emails to a specified Gmail address with HTML body preservation
+- **Email forwarding** – Forwards new emails to a specified Gmail address with the full HTML body, inline images and attachments
 - **Duplicate prevention** – Tracks already-forwarded messages in SQLite database
 - **Docker-ready** – Includes Dockerfile and docker-compose.yml for easy deployment
 
@@ -92,8 +92,8 @@ docker-compose down
 ## How it works
 
 1. **Login** – The script uses Playwright to launch a headless Chromium browser and authenticate via CAS
-2. **Poll inbox** – Navigates to Partage webmail and checks for new emails since the last poll
-3. **Forward** – For each new email, sends a formatted message to Gmail via SMTP
+2. **Poll inbox** – Lists unread inbox messages via Partage's REST endpoint and downloads each as a raw RFC 822 message (falls back to scraping the reading pane if that fails)
+3. **Forward** – Sends each message to Gmail via SMTP with its HTML body, inline images and attachments
 4. **Track** – Stores forwarded email IDs in SQLite to prevent duplicates
 5. **Repeat** – Continues polling at the configured interval
 
@@ -104,6 +104,7 @@ docker-compose down
 │   ├── main.py        # Main entry point and run loop
 │   ├── browser.py     # Playwright-based Partage session management
 │   ├── forwarder.py   # Gmail SMTP forwarding logic
+│   ├── rawmail.py     # Raw message parsing (body, inline images, attachments)
 │   ├── config.py      # Environment variable loading
 │   └── db.py          # SQLite database operations
 ├── data/              # Persistent data storage (SQLite DB)

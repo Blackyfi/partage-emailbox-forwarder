@@ -1,9 +1,8 @@
 import re
 import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+from email.message import EmailMessage
 from email.utils import formataddr, formatdate, parseaddr
-from html import unescape
+from html import escape, unescape
 
 FROM_NAME = 'Partage Auto-Forwarder'
 SUBJECT_PREFIX = '[Partage]'
@@ -20,13 +19,19 @@ def _html_to_text(html: str) -> str:
     return re.sub(r'\n{3,}', '\n\n', text).strip()
 
 
-def forward(email: dict, cfg: dict):
+def _split_type(content_type: str) -> tuple:
+    maintype, _, subtype = (content_type or 'application/octet-stream').partition('/')
+    return maintype or 'application', subtype or 'octet-stream'
+
+
+def build_message(email: dict, cfg: dict) -> EmailMessage:
     subject = email.get('subject') or '(no subject)'
     sender = (email.get('from') or 'unknown sender').strip()
     date = email.get('date') or ''
     body_html = email.get('body') or ''
+    body_text = email.get('text') or _html_to_text(body_html)
 
-    msg = MIMEMultipart('alternative')
+    msg = EmailMessage()
     msg['Subject'] = f'{SUBJECT_PREFIX} {subject}'
     msg['From'] = formataddr((FROM_NAME, cfg['gmail_user']))
     msg['To'] = cfg['forward_to']
@@ -37,9 +42,6 @@ def forward(email: dict, cfg: dict):
     # address rather than just a display name.
     reply_name, reply_addr = parseaddr(sender)
     if '@' in reply_addr:
-        # Assigning the raw "Name <addr>" string makes the compat32 generator
-        # RFC2047-encode the whole value, address included, leaving no
-        # addr-spec to reply to. formataddr encodes only the display name.
         msg['Reply-To'] = formataddr((reply_name, reply_addr))
 
     text_part = (
@@ -49,7 +51,7 @@ def forward(email: dict, cfg: dict):
         f'Date:    {date}\n'
         f'Subject: {subject}\n'
         f'{"-" * 48}\n\n'
-        f'{_html_to_text(body_html)}\n'
+        f'{body_text}\n'
     )
 
     html_part = f"""\
@@ -59,16 +61,33 @@ def forward(email: dict, cfg: dict):
     <div style="font-weight:600;color:#4a6fa5;margin-bottom:6px">
       Forwarded automatically from your Partage mailbox
     </div>
-    <div><strong>From:</strong> {sender}</div>
-    <div><strong>Date:</strong> {date}</div>
-    <div><strong>Subject:</strong> {subject}</div>
+    <div><strong>From:</strong> {escape(sender)}</div>
+    <div><strong>Date:</strong> {escape(date)}</div>
+    <div><strong>Subject:</strong> {escape(subject)}</div>
   </div>
   {body_html}
 </div>"""
 
-    msg.attach(MIMEText(text_part, 'plain', 'utf-8'))
-    msg.attach(MIMEText(html_part, 'html', 'utf-8'))
+    msg.set_content(text_part)
+    msg.add_alternative(html_part, subtype='html')
 
+    # Images the HTML refers to via cid: travel with it (multipart/related).
+    html_msg = msg.get_payload()[1]
+    for img in email.get('inline') or []:
+        maintype, subtype = _split_type(img['content_type'])
+        html_msg.add_related(img['data'], maintype, subtype, cid=f"<{img['cid']}>")
+
+    for att in email.get('attachments') or []:
+        maintype, subtype = _split_type(att['content_type'])
+        msg.add_attachment(
+            att['data'], maintype=maintype, subtype=subtype,
+            filename=att.get('filename') or 'attachment',
+        )
+    return msg
+
+
+def forward(email: dict, cfg: dict):
+    msg = build_message(email, cfg)
     with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
         server.login(cfg['gmail_user'], cfg['gmail_password'])
-        server.sendmail(cfg['gmail_user'], cfg['forward_to'], msg.as_string())
+        server.send_message(msg, cfg['gmail_user'], cfg['forward_to'])

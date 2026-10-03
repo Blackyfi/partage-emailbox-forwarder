@@ -1,123 +1,108 @@
 # partage-emailbox-forwarder
 
-Automated email forwarder that monitors a Partage (Zimbra) mailbox via CAS authentication and forwards new messages to Gmail using Playwright for browser automation.
+Forwards new mail from a Partage (Zimbra) mailbox at Bordeaux INP to Gmail, with the
+full message: formatted body, inline images, attachments, and who it was sent to.
 
-## Features
+It logs in through Bordeaux INP's CAS single sign-on, downloads every new message as
+the raw original via Zimbra's REST API, and sends it on through Gmail's SMTP server.
+There's no browser involved, so it runs comfortably on a Raspberry Pi in about 25 MB of RAM.
 
-- **Automatic polling** – Checks for new emails at configurable intervals
-- **CAS authentication** – Logs into Partage via Bordeaux INP's central authentication system
-- **Email forwarding** – Forwards new emails to a specified Gmail address with the full HTML body, inline images and attachments
-- **Duplicate prevention** – Tracks already-forwarded messages in SQLite database
-- **Docker-ready** – Includes Dockerfile and docker-compose.yml for easy deployment
+## What a forwarded mail looks like
 
-## Requirements
+- **Inbox list:** shows `Marie Dupont via Partage` and `[Partage] Re: [labo-info] Seminar…`
+- **Top of the mail:** a small banner with the original From / To / Cc / Date and a list of attachments
+- **Below the banner:** the original message as it appears in Partage, including images and quoted replies
+- **Reply:** goes to the original author (or to the list, if the list asks for that)
+- **Threads:** replies in the same conversation are grouped together, as in Partage
+- **Large attachments:** if a message is over Gmail's 25 MB limit, the largest attachments
+  are left out and named in the banner so you know to open the mail in Partage
 
-- Python 3.8+
-- Playwright (browser automation)
-- Docker & Docker Compose (optional, for containerized deployment)
+## Setup
 
-## Installation
-
-### 1. Clone the repository
+You'll need Docker (with Compose) and a Gmail account with an
+[App Password](https://support.google.com/accounts/answer/185833), which requires 2-Step Verification.
 
 ```bash
 git clone <repository-url>
 cd partage-emailbox-forwarder
+cp .env.example .env    # then fill it in
+docker compose up -d --build
 ```
 
-### 2. Install dependencies
+### Configuration (`.env`)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PARTAGE_USERNAME` | yes | Your CAS login, not an email address (e.g. `jdoe`) |
+| `PARTAGE_PASSWORD` | yes | Your CAS password. Wrap it in single quotes if it contains `$`, `#` or spaces |
+| `FORWARD_TO` | yes | Where to forward mail |
+| `GMAIL_USER` | yes | Gmail account that sends the forwards |
+| `GMAIL_APP_PASSWORD` | yes | App Password for `GMAIL_USER` (spaces are fine) |
+| `PARTAGE_URL` | | Webmail URL. Default: `https://partage.bordeaux-inp.fr/mail` |
+| `PARTAGE_QUERY` | | Zimbra search for which mail to forward. Default: `in:inbox`. For example, `in:inbox OR in:Listes` |
+| `POLL_INTERVAL_SECONDS` | | How often to check. Default: `300`, minimum `30` |
+| `SUBJECT_PREFIX` | | Added to forwarded subjects. Default: `[Partage]`. Set it empty for none |
+| `MAX_ATTEMPTS` | | Polls to retry a failing message before giving up. Default: `5` |
+| `HTTP_TIMEOUT_SECONDS` | | Timeout for each request to Partage. Default: `30` |
+| `LOG_LEVEL` | | `DEBUG`, `INFO`, `WARNING` or `ERROR`. Default: `INFO` |
+| `DB_PATH` | | SQLite database. Default: `/data/emails.db` |
+
+## Day to day
 
 ```bash
-pip install -r requirements.txt
-playwright install chromium
+docker compose logs -f                                         # what it's doing
+docker compose ps                                              # "healthy" = polls are succeeding
+docker compose exec forwarder python -m partage_forwarder --status   # recently forwarded mail
 ```
 
-### 3. Configure environment variables
+Logs stay quiet while there is nothing new. Each forwarded mail gets one line. To also
+log every empty poll, set `LOG_LEVEL=DEBUG`.
 
-Copy `.env.example` to `.env` and fill in your credentials:
+To preview what would be sent without sending anything or marking anything as done:
 
 ```bash
-cp .env.example .env
+docker compose run --rm forwarder python -m partage_forwarder --dry-run /data/preview
+# then open data/preview/*.eml in any mail client
 ```
 
-Required variables:
+## How it decides what to forward
 
-| Variable | Description |
-|----------|-------------|
-| `PARTAGE_USERNAME` | Your CAS login, not an email address (e.g., `nthongphao`) |
-| `PARTAGE_PASSWORD` | Your Partage/CAS password |
-| `CAS_URL` | CAS login URL |
-| `FORWARD_TO` | Destination Gmail address |
-| `GMAIL_USER` | Gmail sender address |
-| `GMAIL_APP_PASSWORD` | Gmail App Password (not your regular password) |
+- **Every poll:** it lists the messages matching `PARTAGE_QUERY` from the last few days and
+  forwards any it hasn't forwarded before. This includes mail you've already read in Partage.
+  Nothing in Partage is changed, and messages are not marked as read.
+- **First run:** messages already in the mailbox count as done, except unread ones from the
+  past week. A new install therefore doesn't flood your inbox with old mail. A database from
+  the older, browser-based version is recognised, so nothing it already sent is sent again.
+- **Downtime:** after an outage, it looks back far enough (up to 60 days) to catch up on
+  anything that arrived in the meantime.
+- **Failures:** a message that fails is retried on later polls. After `MAX_ATTEMPTS` failures
+  it is skipped, and you get a short "could not forward" email with its sender and subject.
+  Connection problems (Partage or Gmail down, Wi-Fi gone) don't count as attempts. The
+  forwarder just backs off and tries again.
+- **Wrong password:** if CAS rejects the password, the forwarder pauses for 6 hours instead
+  of retrying every few minutes, which could get the account locked. Fix `.env` and run
+  `docker compose up -d` to retry right away.
 
-Optional variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PARTAGE_URL` | `https://partage.bordeaux-inp.fr/mail` | Partage webmail URL |
-| `POLL_INTERVAL_SECONDS` | `300` | Check interval in seconds |
-| `LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
-| `DB_PATH` | `/data/emails.db` | SQLite database path |
-| `BROWSER_TIMEOUT_MS` | `20000` | Browser operation timeout in milliseconds |
-
-> **Note:** For Gmail, you must use an [App Password](https://support.google.com/accounts/answer/185833) instead of your regular password. Enable 2-Step Verification on your Google account first.
-
-## Usage
-
-### Running directly with Python
+## Development
 
 ```bash
-python app/main.py
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements-dev.txt
+pytest
+set -a; . ./.env; set +a; DB_PATH=./data/dev.db python -m partage_forwarder --dry-run ./preview
 ```
 
-### Running with Docker
-
-```bash
-docker-compose up -d
 ```
-
-View logs:
-
-```bash
-docker-compose logs -f forwarder
+partage_forwarder/
+├── __main__.py   # CLI, poll loop, backoff, health check
+├── config.py     # environment variables -> Config
+├── partage.py    # CAS/Shibboleth login and Zimbra REST client
+├── rawmail.py    # raw RFC 822 -> Mail (bodies, inline images, attachments)
+├── mailer.py     # the forwarded message, and Gmail SMTP
+├── service.py    # one poll: what's new, forward it, remember it
+└── store.py      # SQLite: what has been forwarded
+tests/            # pytest suite, no network needed
 ```
-
-Stop the service:
-
-```bash
-docker-compose down
-```
-
-## How it works
-
-1. **Login** – The script uses Playwright to launch a headless Chromium browser and authenticate via CAS
-2. **Poll inbox** – Lists unread inbox messages via Partage's REST endpoint and downloads each as a raw RFC 822 message (falls back to scraping the reading pane if that fails)
-3. **Forward** – Sends each message to Gmail via SMTP with its HTML body, inline images and attachments
-4. **Track** – Stores forwarded email IDs in SQLite to prevent duplicates
-5. **Repeat** – Continues polling at the configured interval
-
-## Project structure
-
-```
-├── app/
-│   ├── main.py        # Main entry point and run loop
-│   ├── browser.py     # Playwright-based Partage session management
-│   ├── forwarder.py   # Gmail SMTP forwarding logic
-│   ├── rawmail.py     # Raw message parsing (body, inline images, attachments)
-│   ├── config.py      # Environment variable loading
-│   └── db.py          # SQLite database operations
-├── data/              # Persistent data storage (SQLite DB)
-├── docker-compose.yml # Docker Compose configuration
-├── Dockerfile         # Container build definition
-└── requirements.txt   # Python dependencies
-```
-
-## Important notes
-
-- **CSS selectors** – The browser automation uses CSS selectors that may need adjustment if Partage's UI changes. Inspect the live DOM to verify selectors (`.zl__ri__r`, `.msg`, etc.)
-- **Rate limiting** – Adjust `POLL_INTERVAL_SECONDS` to avoid overloading the server or triggering rate limits
-- **Security** – Never commit your `.env` file. The credentials are already excluded via `.gitignore`
 
 ## License
 

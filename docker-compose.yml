@@ -9,6 +9,8 @@ services:
       TZ: Europe/Paris
     volumes:
       - ./data:/data
+    # Forwards SIGTERM properly, so `docker compose down` stops it at once.
+    init: true
     logging:
       driver: json-file
       options:
@@ -17,7 +19,5 @@ services:
     deploy:
       resources:
         limits:
-          # Chromium plus the Zimbra SPA does not fit comfortably in 512M; an
-          # OOM kill of the browser is the main way this stalls.
-          memory: 1G
-          cpus: '1.0'
+          memory: 256M  # a mail with 20 MB of attachments is held in memory a few times over
+          cpus: '0.5'
